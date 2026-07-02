@@ -1,4 +1,4 @@
-const CACHE_NAME = "time-energy-companion-v1";
+const CACHE_NAME = "time-energy-companion-v2";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

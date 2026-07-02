@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-const STORAGE_KEY = "time-energy-companion-v1";
+const STORAGE_KEY = "time-energy-companion-v2";
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
@@ -12,17 +12,17 @@ const defaultProfile = {
   napMinutes: 30,
   waterInterval: 60,
   budgets: [
-    { id: "reading", label: "读书", minutes: 60, color: "green" },
-    { id: "writing", label: "写作", minutes: 90, color: "blue" },
-    { id: "social", label: "社交", minutes: 30, color: "amber" },
+    { id: "reading", label: "读书", minutes: 60, color: "green", start: "09:30" },
+    { id: "writing", label: "写作", minutes: 90, color: "blue", start: "10:45" },
+    { id: "social", label: "社交", minutes: 30, color: "amber", start: "15:30" },
   ],
   habits: [
-    { id: "morning-meditation", label: "早晨正念冥想", time: "07:05", detail: "10 分钟" },
-    { id: "walk-voice", label: "散步与语音记录", time: "07:20", detail: "计划 / 心情 / 灵感" },
-    { id: "breakfast", label: "早餐与恢复", time: "08:10", detail: "散步回来后" },
-    { id: "water", label: "每小时喝水", time: "每小时", detail: "轻提醒" },
-    { id: "nap", label: "午休", time: "12:30", detail: "30 分钟" },
-    { id: "evening-meditation", label: "晚间正念冥想", time: "22:30", detail: "10 分钟" },
+    { id: "morning-meditation", label: "早晨正念冥想", time: "07:05", detail: "10 分钟", minutes: 10 },
+    { id: "walk-voice", label: "散步与语音记录", time: "07:20", detail: "计划 / 心情 / 灵感", minutes: 40 },
+    { id: "breakfast", label: "早餐与恢复", time: "08:10", detail: "散步回来后", minutes: 30 },
+    { id: "water", label: "每小时喝水", time: "每小时", detail: "轻提醒", minutes: 5 },
+    { id: "nap", label: "午休", time: "12:30", detail: "30 分钟", minutes: 30 },
+    { id: "evening-meditation", label: "晚间正念冥想", time: "22:30", detail: "10 分钟", minutes: 10 },
   ],
 };
 
@@ -47,14 +47,8 @@ const defaultDay = {
   ],
 };
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function uid(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function createInitialState() {
@@ -66,8 +60,23 @@ function createInitialState() {
   };
 }
 
-function minutesFromLogs(logs, category) {
-  return logs.filter((log) => log.category === category).reduce((sum, log) => sum + Number(log.minutes || 0), 0);
+function loadState() {
+  try {
+    const next = localStorage.getItem(STORAGE_KEY);
+    if (next) return JSON.parse(next);
+
+    const old = localStorage.getItem("time-energy-companion-v1");
+    if (old) {
+      const parsed = JSON.parse(old);
+      return {
+        profile: { ...defaultProfile, ...(parsed.profile || {}) },
+        days: parsed.days || { [todayKey()]: defaultDay },
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function timeNow() {
@@ -78,8 +87,8 @@ function weekdayLabel() {
   return new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
 }
 
-function uid(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function minutesFromLogs(logs, category) {
+  return logs.filter((log) => log.category === category).reduce((sum, log) => sum + Number(log.minutes || 0), 0);
 }
 
 function safeFileName(text, ext) {
@@ -100,26 +109,101 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function parseMinutes(detail, fallback = 30) {
+  const match = String(detail || "").match(/(\d+)\s*分钟/);
+  return match ? Number(match[1]) : fallback;
+}
+
+function addMinutes(time, minutes) {
+  const [hour, minute] = time.split(":").map(Number);
+  const date = new Date();
+  date.setHours(hour, minute + Number(minutes || 30), 0, 0);
+  return date.toTimeString().slice(0, 5);
+}
+
+function formatIcsDate(dateKey, time) {
+  return `${dateKey.replaceAll("-", "")}T${time.replace(":", "")}00`;
+}
+
+function escapeIcs(text) {
+  return String(text || "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\n")
+    .replaceAll(",", "\\,")
+    .replaceAll(";", "\\;");
+}
+
 function noteText(note, profile) {
+  return [`【${note.type}】${profile.name} 的记录`, `时间：${note.time}`, "", note.text].join("\n");
+}
+
+function feishuCardText(note, profile, day) {
   return [
-    `【${note.type}】${profile.name} 的记录`,
-    `时间：${note.time}`,
+    `# ${note.type}｜${profile.name} 的时间能量记录`,
     "",
+    `- 时间：${note.time}`,
+    `- 心情：${day.mood}`,
+    `- 能量：${day.energy}/5`,
+    `- 专注：${day.focus}/5`,
+    "",
+    "## 内容",
     note.text,
+    "",
+    "## 文件索引",
+    "如有大文件，请放在百度云盘，并在这里补充链接、提取码和说明。",
   ].join("\n");
 }
 
-function cardText(note, profile) {
+function buildCalendarEvents(profile) {
+  const timedHabits = profile.habits
+    .filter((habit) => /^\d{2}:\d{2}$/.test(habit.time))
+    .map((habit) => ({
+      title: habit.label,
+      start: habit.time,
+      end: addMinutes(habit.time, habit.minutes || parseMinutes(habit.detail, 20)),
+      description: habit.detail,
+    }));
+
+  const budgetEvents = profile.budgets.map((budget) => ({
+    title: `${budget.label}时间块`,
+    start: budget.start || "09:30",
+    end: addMinutes(budget.start || "09:30", budget.minutes),
+    description: `今日预算 ${budget.minutes} 分钟`,
+  }));
+
+  return [...timedHabits, ...budgetEvents].sort((a, b) => a.start.localeCompare(b.start));
+}
+
+function makeIcs(profile, dateKey) {
+  const nowStamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const events = buildCalendarEvents(profile).map((event) => [
+    "BEGIN:VEVENT",
+    `UID:${uid("event")}@time-energy-companion`,
+    `DTSTAMP:${nowStamp}`,
+    `DTSTART:${formatIcsDate(dateKey, event.start)}`,
+    `DTEND:${formatIcsDate(dateKey, event.end)}`,
+    `SUMMARY:${escapeIcs(event.title)}`,
+    `DESCRIPTION:${escapeIcs(event.description || "时间能量伙伴")}`,
+    "END:VEVENT",
+  ].join("\r\n"));
+
   return [
-    "灵感卡片",
-    `来自：${profile.name}`,
-    `类型：${note.type}`,
-    `时间：${note.time}`,
-    "",
-    note.text,
-    "",
-    "记录于「时间能量伙伴」",
-  ].join("\n");
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Time Energy Companion//ZH-CN",
+    "CALSCALE:GREGORIAN",
+    ...events,
+    "END:VCALENDAR",
+  ].join("\r\n");
 }
 
 export function App() {
@@ -127,22 +211,29 @@ export function App() {
   const [activeTab, setActiveTab] = useState("today");
   const [voiceType, setVoiceType] = useState("灵感");
   const [transcript, setTranscript] = useState("");
-  const [isListening, setIsListening] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
   const [taskDraft, setTaskDraft] = useState("");
-  const [logDraft, setLogDraft] = useState({ category: "reading", minutes: 25, label: "读书", quality: "有效投入" });
-  const recognitionRef = useRef(null);
+  const [logDraft, setLogDraft] = useState({ category: "reading", minutes: 25, quality: "有效投入" });
+  const [recordingState, setRecordingState] = useState("idle");
+  const [recordingUrl, setRecordingUrl] = useState("");
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordedBlobRef = useRef(null);
   const fileRef = useRef(null);
   const attachmentFileRef = useRef(null);
 
   const dateKey = todayKey();
-  const day = state.days[dateKey] || defaultDay;
   const profile = state.profile;
-  const supportsVoice = typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window);
+  const day = state.days[dateKey] || defaultDay;
+  const supportsRecording = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => () => {
+    if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  }, [recordingUrl]);
 
   const updateDay = (updater) => {
     setState((current) => {
@@ -157,66 +248,76 @@ export function App() {
     });
   };
 
-  const budgetStats = useMemo(() => {
-    return profile.budgets.map((budget) => {
-      const used = minutesFromLogs(day.logs, budget.id);
-      return { ...budget, used, percent: Math.min(100, Math.round((used / budget.minutes) * 100)) };
-    });
-  }, [day.logs, profile.budgets]);
+  const budgetStats = useMemo(() => profile.budgets.map((budget) => {
+    const used = minutesFromLogs(day.logs || [], budget.id);
+    return { ...budget, used, percent: Math.min(100, Math.round((used / Math.max(1, budget.minutes)) * 100)) };
+  }), [day.logs, profile.budgets]);
 
-  const timeline = useMemo(() => {
-    return [
-      { time: profile.wakeTime, label: "起床", tone: "coral" },
-      { time: "07:05", label: "早晨正念冥想 10 分钟", tone: "green" },
-      { time: "07:20", label: "散步语音：计划 / 心情 / 灵感", tone: "coral" },
-      { time: "08:10", label: "早餐与恢复", tone: "green" },
-      { time: "09:30", label: "读书时间块", tone: "green" },
-      { time: "10:45", label: "写作时间块", tone: "blue" },
-      { time: profile.napTime, label: `午休 ${profile.napMinutes} 分钟`, tone: "green" },
-      { time: "15:30", label: "社交 / 连接", tone: "amber" },
-      { time: "22:30", label: "晚间正念冥想 10 分钟", tone: "green" },
-      { time: profile.sleepTime, label: "目标入睡", tone: "blue" },
-    ];
-  }, [profile]);
-
-  function startVoice() {
-    if (!supportsVoice) {
-      setTranscript("当前浏览器不支持语音识别。可以先手动输入，或用 Chrome / Edge 打开。");
-      return;
-    }
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.lang = "zh-CN";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      const text = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join("");
-      setTranscript(text);
-    };
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
-    recognitionRef.current = recognition;
-    setTranscript("");
-    setIsListening(true);
-    recognition.start();
-  }
-
-  function stopVoice() {
-    recognitionRef.current?.stop();
-    setIsListening(false);
-  }
+  const timeline = useMemo(() => buildCalendarEvents(profile).map((event) => ({
+    time: event.start,
+    label: event.title,
+    detail: event.description,
+    tone: event.title.includes("写作") ? "blue" : event.title.includes("社交") ? "amber" : "green",
+  })), [profile]);
 
   function saveVoiceNote() {
     const text = transcript.trim();
     if (!text) return;
     updateDay((current) => ({
       ...current,
-      notes: [{ id: uid("note"), type: voiceType, text, time: timeNow() }, ...current.notes],
+      notes: [{ id: uid("note"), type: voiceType, text, time: timeNow() }, ...(current.notes || [])],
     }));
     setTranscript("");
+  }
+
+  async function startRecording() {
+    if (!supportsRecording) {
+      window.alert("当前浏览器不支持网页录音。可以先用系统录音 App，再把文件或链接放进附件库。");
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunksRef.current = [];
+    const recorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = recorder;
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+      const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      recordedBlobRef.current = blob;
+      if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+      setRecordingUrl(URL.createObjectURL(blob));
+      setRecordingState("ready");
+    };
+    recorder.start();
+    setRecordingState("recording");
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+  }
+
+  async function saveRecording() {
+    if (!recordedBlobRef.current) return;
+    const blob = recordedBlobRef.current;
+    const dataUrl = await readBlobAsDataUrl(blob);
+    const ext = blob.type.includes("mp4") ? "m4a" : "webm";
+    updateDay((current) => ({
+      ...current,
+      attachments: [{
+        id: uid("audio"),
+        kind: "audio",
+        name: `语音记录-${dateKey}-${timeNow().replace(":", "")}.${ext}`,
+        type: blob.type || "audio/webm",
+        size: blob.size,
+        time: timeNow(),
+        dataUrl,
+      }, ...(current.attachments || [])],
+    }));
+    recordedBlobRef.current = null;
+    setRecordingUrl("");
+    setRecordingState("idle");
   }
 
   function addTask() {
@@ -224,7 +325,7 @@ export function App() {
     if (!title) return;
     updateDay((current) => ({
       ...current,
-      mustDos: [...current.mustDos, { id: uid("task"), title, minutes: 30, done: false }],
+      mustDos: [...(current.mustDos || []), { id: uid("task"), title, minutes: 30, done: false }],
     }));
     setTaskDraft("");
   }
@@ -233,20 +334,20 @@ export function App() {
     const budget = profile.budgets.find((item) => item.id === logDraft.category);
     updateDay((current) => ({
       ...current,
-      logs: [
-        { id: uid("log"), category: logDraft.category, label: budget?.label || logDraft.label, minutes: Number(logDraft.minutes), quality: logDraft.quality, energy: current.energy, time: timeNow() },
-        ...current.logs,
-      ],
+      logs: [{
+        id: uid("log"),
+        category: logDraft.category,
+        label: budget?.label || "记录",
+        minutes: Number(logDraft.minutes),
+        quality: logDraft.quality,
+        energy: current.energy,
+        time: timeNow(),
+      }, ...(current.logs || [])],
     }));
   }
 
   function exportData() {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      app: "time-energy-companion",
-      version: 1,
-      ...state,
-    };
+    const payload = { exportedAt: new Date().toISOString(), app: "time-energy-companion", version: 2, ...state };
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), `time-energy-backup-${dateKey}.json`);
   }
 
@@ -268,42 +369,60 @@ export function App() {
     reader.readAsText(file);
   }
 
-  function exportNote(note, mode = "note") {
-    const text = mode === "card" ? cardText(note, profile) : noteText(note, profile);
+  function exportCalendar() {
+    const ics = makeIcs(profile, dateKey);
+    downloadBlob(new Blob([ics], { type: "text/calendar;charset=utf-8" }), `time-energy-calendar-${dateKey}.ics`);
+  }
+
+  function exportNote(note, mode = "feishu") {
+    const text = mode === "feishu" ? feishuCardText(note, profile, day) : noteText(note, profile);
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), safeFileName(`${note.type}-${note.time}`, "txt"));
   }
 
   function exportSelectedNotes() {
-    const selected = day.notes.filter((note) => selectedNoteIds.includes(note.id));
+    const selected = (day.notes || []).filter((note) => selectedNoteIds.includes(note.id));
     if (!selected.length) {
       window.alert("请先在灵感池里选择要导出的卡片。");
       return;
     }
-    const text = selected.map((note) => cardText(note, profile)).join("\n\n---\n\n");
+    const text = selected.map((note) => feishuCardText(note, profile, day)).join("\n\n---\n\n");
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `selected-inspiration-cards-${dateKey}.txt`);
   }
 
-  async function copyNote(note, mode = "card") {
-    const text = mode === "card" ? cardText(note, profile) : noteText(note, profile);
+  function exportAttachmentIndex() {
+    const attachments = Object.entries(state.days).flatMap(([key, item]) => (item.attachments || []).map((file) => ({
+      date: key,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      time: file.time,
+      kind: file.kind || "file",
+    })));
+    const lines = attachments.map((file) => `${file.date} ${file.time}｜${file.kind}｜${file.name}｜${Math.ceil(file.size / 1024)} KB`);
+    downloadBlob(new Blob([lines.join("\n") || "暂无附件索引"], { type: "text/plain;charset=utf-8" }), `attachment-index-${dateKey}.txt`);
+  }
+
+  async function copyNote(note) {
+    const text = feishuCardText(note, profile, day);
     try {
       await navigator.clipboard.writeText(text);
-      window.alert("已复制到剪贴板。");
+      window.alert("已复制为飞书格式。");
     } catch {
       window.alert("复制失败。可以改用导出文本文件。");
     }
   }
 
   async function shareNote(note) {
-    const text = cardText(note, profile);
+    const text = feishuCardText(note, profile, day);
     if (navigator.share) {
       try {
-        await navigator.share({ title: `${note.type}卡片`, text });
+        await navigator.share({ title: `${note.type}｜飞书记录`, text });
       } catch {
         // User cancelled the share sheet.
       }
       return;
     }
-    copyNote(note, "card");
+    copyNote(note);
   }
 
   function toggleNoteSelected(id) {
@@ -314,7 +433,7 @@ export function App() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
-      window.alert("当前版本建议单个附件小于 5MB。大文件更适合放在 iCloud Drive，再把链接记到灵感里。");
+      window.alert("当前版本建议单个附件小于 5MB。大文件请放百度云盘，再把链接和提取码写进灵感卡。");
       event.target.value = "";
       return;
     }
@@ -322,17 +441,15 @@ export function App() {
     reader.onload = () => {
       updateDay((current) => ({
         ...current,
-        attachments: [
-          {
-            id: uid("file"),
-            name: file.name,
-            type: file.type || "application/octet-stream",
-            size: file.size,
-            time: timeNow(),
-            dataUrl: String(reader.result),
-          },
-          ...(current.attachments || []),
-        ],
+        attachments: [{
+          id: uid("file"),
+          kind: "file",
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          time: timeNow(),
+          dataUrl: String(reader.result),
+        }, ...(current.attachments || [])],
       }));
       event.target.value = "";
     };
@@ -340,16 +457,11 @@ export function App() {
   }
 
   function exportAttachment(attachment) {
-    fetch(attachment.dataUrl)
-      .then((response) => response.blob())
-      .then((blob) => downloadBlob(blob, attachment.name));
+    fetch(attachment.dataUrl).then((response) => response.blob()).then((blob) => downloadBlob(blob, attachment.name));
   }
 
   function deleteAttachment(id) {
-    updateDay((current) => ({
-      ...current,
-      attachments: (current.attachments || []).filter((item) => item.id !== id),
-    }));
+    updateDay((current) => ({ ...current, attachments: (current.attachments || []).filter((item) => item.id !== id) }));
   }
 
   return (
@@ -364,11 +476,13 @@ export function App() {
               setVoiceType={setVoiceType}
               transcript={transcript}
               setTranscript={setTranscript}
-              isListening={isListening}
-              startVoice={startVoice}
-              stopVoice={stopVoice}
               saveVoiceNote={saveVoiceNote}
-              supportsVoice={supportsVoice}
+              recordingState={recordingState}
+              recordingUrl={recordingUrl}
+              startRecording={startRecording}
+              stopRecording={stopRecording}
+              saveRecording={saveRecording}
+              supportsRecording={supportsRecording}
             />
             <div className="two-column">
               <TaskPanel day={day} updateDay={updateDay} taskDraft={taskDraft} setTaskDraft={setTaskDraft} addTask={addTask} />
@@ -377,7 +491,7 @@ export function App() {
             <HabitPanel profile={profile} day={day} updateDay={updateDay} />
             <BudgetPanel budgetStats={budgetStats} logDraft={logDraft} setLogDraft={setLogDraft} addLog={addLog} />
             <InspirationPanel
-              notes={day.notes}
+              notes={day.notes || []}
               selectedNoteIds={selectedNoteIds}
               toggleNoteSelected={toggleNoteSelected}
               exportNote={exportNote}
@@ -386,7 +500,7 @@ export function App() {
             />
           </>
         )}
-        {activeTab === "calendar" && <CalendarPanel timeline={timeline} profile={profile} day={day} />}
+        {activeTab === "calendar" && <CalendarPanel timeline={timeline} profile={profile} exportCalendar={exportCalendar} />}
         {activeTab === "stats" && <StatsPanel day={day} budgetStats={budgetStats} />}
         {activeTab === "settings" && (
           <SettingsPanel
@@ -397,6 +511,7 @@ export function App() {
             setState={setState}
             exportData={exportData}
             exportSelectedNotes={exportSelectedNotes}
+            exportAttachmentIndex={exportAttachmentIndex}
             importData={importData}
             fileRef={fileRef}
             attachmentFileRef={attachmentFileRef}
@@ -450,7 +565,20 @@ function RhythmCard({ profile }) {
 }
 
 function VoicePanel(props) {
-  const { voiceType, setVoiceType, transcript, setTranscript, isListening, startVoice, stopVoice, saveVoiceNote, supportsVoice } = props;
+  const {
+    voiceType,
+    setVoiceType,
+    transcript,
+    setTranscript,
+    saveVoiceNote,
+    recordingState,
+    recordingUrl,
+    startRecording,
+    stopRecording,
+    saveRecording,
+    supportsRecording,
+  } = props;
+
   return (
     <section className="voice-panel">
       <div className="voice-orb" aria-hidden="true">录</div>
@@ -462,11 +590,17 @@ function VoicePanel(props) {
             <button key={type} className={voiceType === type ? "selected" : ""} onClick={() => setVoiceType(type)}>{type}</button>
           ))}
         </div>
-        <textarea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder={supportsVoice ? "点击开始后，说出你今天想到的事..." : "当前浏览器不支持语音识别，可以手动输入。"} />
+        <textarea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="先写下文字灵感；如果需要音频，用下方录音。" />
         <div className="button-row">
-          <button className="primary" onClick={isListening ? stopVoice : startVoice}>{isListening ? "停止记录" : "开始语音记录"}</button>
-          <button className="secondary" onClick={saveVoiceNote}>保存</button>
+          <button className="primary" onClick={saveVoiceNote}>保存文字</button>
+          <button className="secondary" onClick={recordingState === "recording" ? stopRecording : startRecording}>
+            {recordingState === "recording" ? "停止录音" : "开始录音"}
+          </button>
+          {recordingState === "ready" && <button className="secondary" onClick={saveRecording}>保存音频</button>}
         </div>
+        {!supportsRecording && <p className="voice-hint">当前浏览器不支持网页录音，可用系统录音后把文件放入附件库。</p>}
+        {recordingState === "recording" && <p className="voice-hint">正在录音。录完后会保存到备份中心，不会写入苹果语音备忘录。</p>}
+        {recordingUrl && <audio className="audio-preview" controls src={recordingUrl} />}
       </div>
     </section>
   );
@@ -477,17 +611,17 @@ function TaskPanel({ day, updateDay, taskDraft, setTaskDraft, addTask }) {
     <section className="panel">
       <div className="panel-title">
         <h2>今日三件事</h2>
-        <span>{day.mustDos.filter((task) => task.done).length}/{day.mustDos.length}</span>
+        <span>{(day.mustDos || []).filter((task) => task.done).length}/{(day.mustDos || []).length}</span>
       </div>
       <div className="task-list">
-        {day.mustDos.map((task, index) => (
+        {(day.mustDos || []).map((task, index) => (
           <label className="task-row" key={task.id}>
             <input
               type="checkbox"
               checked={task.done}
               onChange={() => updateDay((current) => ({
                 ...current,
-                mustDos: current.mustDos.map((item) => item.id === task.id ? { ...item, done: !item.done } : item),
+                mustDos: (current.mustDos || []).map((item) => item.id === task.id ? { ...item, done: !item.done } : item),
               }))}
             />
             <span className="task-index">{index + 1}</span>
@@ -606,9 +740,9 @@ function InspirationPanel({ notes, selectedNoteIds, toggleNoteSelected, exportNo
             <p>{note.text}</p>
             <span>{note.time}</span>
             <div className="note-actions">
-              <button onClick={() => copyNote(note)}>复制</button>
-              <button onClick={() => exportNote(note, "card")}>导出</button>
-              <button onClick={() => shareNote(note)}>分享</button>
+              <button onClick={() => copyNote(note)}>复制飞书格式</button>
+              <button onClick={() => exportNote(note, "feishu")}>导出</button>
+              <button onClick={() => shareNote(note)}>分享到飞书</button>
             </div>
           </article>
         ))}
@@ -617,18 +751,20 @@ function InspirationPanel({ notes, selectedNoteIds, toggleNoteSelected, exportNo
   );
 }
 
-function CalendarPanel({ timeline, profile }) {
+function CalendarPanel({ timeline, profile, exportCalendar }) {
   return (
     <section className="panel full calendar-panel">
       <div className="panel-title">
         <h2>今天日历</h2>
         <span>{profile.wakeTime} - {profile.sleepTime}</span>
       </div>
+      <button className="calendar-export" onClick={exportCalendar}>导出到苹果日历 (.ics)</button>
+      <p className="calendar-hint">iPhone 下载后可导入日历。当前版本不会自动写入系统日历。</p>
       <div className="timeline">
         {timeline.map((item) => (
           <div className={`timeline-row ${item.tone}`} key={`${item.time}-${item.label}`}>
             <time>{item.time}</time>
-            <span>{item.label}</span>
+            <span>{item.label}<small>{item.detail}</small></span>
           </div>
         ))}
       </div>
@@ -637,7 +773,7 @@ function CalendarPanel({ timeline, profile }) {
 }
 
 function StatsPanel({ day, budgetStats }) {
-  const total = day.logs.reduce((sum, log) => sum + Number(log.minutes || 0), 0);
+  const total = (day.logs || []).reduce((sum, log) => sum + Number(log.minutes || 0), 0);
   return (
     <section className="panel full">
       <div className="panel-title">
@@ -669,6 +805,7 @@ function SettingsPanel(props) {
     setState,
     exportData,
     exportSelectedNotes,
+    exportAttachmentIndex,
     importData,
     fileRef,
     attachmentFileRef,
@@ -677,12 +814,12 @@ function SettingsPanel(props) {
     deleteAttachment,
   } = props;
   const updateProfile = (patch) => setState((current) => ({ ...current, profile: { ...current.profile, ...patch } }));
-  const updateBudget = (id, minutes) => {
+  const updateBudget = (id, patch) => {
     setState((current) => ({
       ...current,
       profile: {
         ...current.profile,
-        budgets: current.profile.budgets.map((budget) => budget.id === id ? { ...budget, minutes: Number(minutes) } : budget),
+        budgets: current.profile.budgets.map((budget) => budget.id === id ? { ...budget, ...patch } : budget),
       },
     }));
   };
@@ -700,8 +837,9 @@ function SettingsPanel(props) {
     <section className="panel full settings-panel">
       <div className="panel-title">
         <h2>我的节律</h2>
-        <span>给自己或伴侣定制</span>
+        <span>首次设置后自动保存</span>
       </div>
+      <p className="settings-note">这些设置保存在当前设备。换手机、清理浏览器数据或更换浏览器前，请先在备份中心导出完整备份。</p>
       <div className="settings-grid">
         <label>名字<input value={profile.name} onChange={(event) => updateProfile({ name: event.target.value })} /></label>
         <label>起床时间<input type="time" value={profile.wakeTime} onChange={(event) => updateProfile({ wakeTime: event.target.value })} /></label>
@@ -712,7 +850,7 @@ function SettingsPanel(props) {
       {profile.budgets.map((budget) => (
         <label className="budget-setting" key={budget.id}>
           <span>{budget.label}</span>
-          <input type="number" min="0" value={budget.minutes} onChange={(event) => updateBudget(budget.id, event.target.value)} />
+          <input type="number" min="0" value={budget.minutes} onChange={(event) => updateBudget(budget.id, { minutes: Number(event.target.value) })} />
           <small>分钟</small>
         </label>
       ))}
@@ -737,6 +875,7 @@ function SettingsPanel(props) {
         selectedNoteIds={selectedNoteIds}
         exportData={exportData}
         exportSelectedNotes={exportSelectedNotes}
+        exportAttachmentIndex={exportAttachmentIndex}
         attachmentFileRef={attachmentFileRef}
         saveAttachment={saveAttachment}
         exportAttachment={exportAttachment}
@@ -753,6 +892,7 @@ function BackupCenter(props) {
     selectedNoteIds,
     exportData,
     exportSelectedNotes,
+    exportAttachmentIndex,
     attachmentFileRef,
     saveAttachment,
     exportAttachment,
@@ -774,10 +914,11 @@ function BackupCenter(props) {
         <div><strong>{totalLogs}</strong><span>时间记录</span></div>
         <div><strong>{totalFiles}</strong><span>附件</span></div>
       </div>
-      <p className="backup-note">完整备份会包含你的设置、时间记录、灵感文字和小附件。建议每周导出一次，保存到 iCloud Drive 或电脑。</p>
+      <p className="backup-note">完整备份会包含设置、时间记录、灵感文字、录音和小附件。大文件请放百度云盘，灵感卡里保存链接和提取码。</p>
       <div className="button-row export-row">
         <button className="primary" onClick={exportData}>完整备份</button>
         <button className="secondary" onClick={exportSelectedNotes}>导出已选灵感</button>
+        <button className="secondary" onClick={exportAttachmentIndex}>导出附件索引</button>
         <span className="selection-hint">已选 {selectedNoteIds.length} 张</span>
       </div>
       <div className="attachment-head">
@@ -786,12 +927,13 @@ function BackupCenter(props) {
         <input ref={attachmentFileRef} type="file" onChange={saveAttachment} hidden />
       </div>
       <div className="attachment-list">
-        {attachments.length === 0 && <p className="empty-hint">今天还没有附件。小文件会进入完整备份，大文件建议放 iCloud Drive 后把链接写进灵感。</p>}
+        {attachments.length === 0 && <p className="empty-hint">今天还没有附件。小文件会进入完整备份，大文件建议放百度云盘后把链接写进灵感。</p>}
         {attachments.map((file) => (
           <article className="attachment-row" key={file.id}>
             <div>
-              <strong>{file.name}</strong>
+              <strong>{file.kind === "audio" ? "录音：" : ""}{file.name}</strong>
               <span>{Math.ceil(file.size / 1024)} KB · {file.time}</span>
+              {file.kind === "audio" && <audio controls src={file.dataUrl} />}
             </div>
             <div>
               <button onClick={() => exportAttachment(file)}>保存</button>

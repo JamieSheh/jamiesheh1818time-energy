@@ -198,6 +198,25 @@ button {
   color: var(--coral-dark);
 }
 
+.voice-hint,
+.calendar-hint,
+.settings-note {
+  margin: 10px 0 0;
+  color: rgb(255 255 255 / 0.86);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-note,
+.calendar-hint {
+  color: #6b7280;
+}
+
+.audio-preview {
+  width: 100%;
+  margin-top: 12px;
+}
+
 textarea {
   width: 100%;
   min-height: 88px;
@@ -463,7 +482,7 @@ input[type="range"] {
 
 .note-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr;
   gap: 6px;
   margin-top: 12px;
 }
@@ -477,11 +496,22 @@ input[type="range"] {
   border: 1px solid #ffd1c5;
   font-size: 12px;
   font-weight: 800;
+  line-height: 1.1;
 }
 
 .timeline {
   display: grid;
   gap: 10px;
+}
+
+.calendar-export {
+  width: 100%;
+  min-height: 46px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  color: white;
+  background: var(--coral);
+  font-weight: 800;
 }
 
 .timeline-row {
@@ -498,6 +528,13 @@ input[type="range"] {
 .timeline-row time {
   color: var(--muted);
   font-weight: 800;
+}
+
+.timeline-row span small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .timeline-row.green {
@@ -561,6 +598,7 @@ input[type="range"] {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  margin-top: 14px;
 }
 
 .settings-grid label,
@@ -698,6 +736,11 @@ input[type="range"] {
   font-size: 12px;
 }
 
+.attachment-row audio {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .attachment-row div:last-child {
   display: flex;
   gap: 6px;
@@ -776,6 +819,10 @@ input[type="range"] {
 
   .note-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .note-actions {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
