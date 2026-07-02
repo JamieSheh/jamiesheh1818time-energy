@@ -1,0 +1,25 @@
+{
+  "name": "时间能量伙伴",
+  "short_name": "时间伙伴",
+  "description": "手机优先的个人时间、能量、语音灵感和习惯管理网页。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fff9ef",
+  "theme_color": "#fff9ef",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
