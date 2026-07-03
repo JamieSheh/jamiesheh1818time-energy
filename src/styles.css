@@ -207,6 +207,27 @@ button {
   line-height: 1.5;
 }
 
+.shortcut-card {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgb(255 255 255 / 0.16);
+  border: 1px solid rgb(255 255 255 / 0.28);
+}
+
+.shortcut-card strong,
+.shortcut-card span {
+  display: block;
+}
+
+.shortcut-card span {
+  color: rgb(255 255 255 / 0.86);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .settings-note,
 .calendar-hint {
   color: #6b7280;
@@ -326,6 +347,8 @@ textarea {
 .inline-form input,
 .log-form input,
 .log-form select,
+.log-card input,
+.log-card select,
 .settings-grid input,
 .budget-setting input {
   min-height: 42px;
@@ -431,7 +454,69 @@ input[type="range"] {
 }
 
 .log-form {
-  grid-template-columns: 1.2fr 74px auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+}
+
+.log-form button {
+  width: 100%;
+}
+
+.log-list,
+.inbox-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.log-card,
+.inbox-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffdf8;
+}
+
+.log-card {
+  grid-template-columns: 1fr;
+}
+
+.log-card button {
+  min-height: 42px;
+  border-radius: 12px;
+  color: #b91c1c;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  font-weight: 800;
+}
+
+.inbox-card p {
+  margin: 8px 0;
+  color: #374151;
+  line-height: 1.55;
+}
+
+.inbox-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inbox-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inbox-actions button {
+  min-height: 38px;
+  border-radius: 12px;
+  color: var(--coral-dark);
+  background: #fff4ee;
+  border: 1px solid #ffd1c5;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .note-grid {
@@ -650,7 +735,7 @@ input[type="range"] {
 
 .backup-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
@@ -823,6 +908,28 @@ input[type="range"] {
 
   .note-actions {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .log-form {
+    grid-template-columns: 1.1fr 0.8fr 0.7fr 0.8fr 0.8fr 1fr 1.3fr auto;
+  }
+
+  .log-card {
+    grid-template-columns: 1.1fr 0.8fr 0.7fr 0.8fr 0.8fr 1fr 1.4fr auto;
+    align-items: center;
+  }
+
+  .inbox-card {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    align-items: center;
+  }
+
+  .inbox-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .backup-stats {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 

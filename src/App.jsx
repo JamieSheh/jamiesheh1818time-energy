@@ -40,12 +40,16 @@ const defaultDay = {
     { id: "note-1", type: "灵感", text: "关于时间统计的长期主义思考", time: "07:28" },
     { id: "note-2", type: "计划", text: "今天先写一段读书日记，再整理行动清单", time: "07:33" },
   ],
+  inbox: [],
   attachments: [],
   logs: [
-    { id: "log-1", category: "reading", label: "读书", minutes: 35, energy: 4, quality: "有效投入", time: "09:10" },
-    { id: "log-2", category: "writing", label: "写作", minutes: 45, energy: 3, quality: "有效投入", time: "10:30" },
+    { id: "log-1", category: "reading", label: "读书", minutes: 35, energy: 4, mood: "平静", quality: "有效投入", note: "读书笔记", time: "09:10" },
+    { id: "log-2", category: "writing", label: "写作", minutes: 45, energy: 3, mood: "平静", quality: "有效投入", note: "读书日记写作", time: "10:30" },
   ],
 };
+
+const MOODS = ["平静", "开心", "焦虑", "低落", "兴奋"];
+const QUALITY_OPTIONS = ["有效投入", "普通完成", "被打断", "恢复休息", "消耗较大"];
 
 function uid(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -89,6 +93,43 @@ function weekdayLabel() {
 
 function minutesFromLogs(logs, category) {
   return logs.filter((log) => log.category === category).reduce((sum, log) => sum + Number(log.minutes || 0), 0);
+}
+
+function clampNumber(value, min, max, fallback) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return fallback;
+  return Math.min(max, Math.max(min, next));
+}
+
+function inferCapture(text, type, day, profile) {
+  const content = String(text || "");
+  const hourMatch = content.match(/(\d+(?:\.\d+)?)\s*(小时|个小时|h)/i);
+  const minuteMatch = content.match(/(\d+)\s*(分钟|分|min|m)/i);
+  const minutes = hourMatch ? Math.round(Number(hourMatch[1]) * 60) : minuteMatch ? Number(minuteMatch[1]) : 25;
+  const energyMatch = content.match(/(?:能量|精力)\D*([1-5])/);
+  const mood = MOODS.find((item) => content.includes(item)) || day.mood || "平静";
+
+  const budget = profile.budgets.find((item) => content.includes(item.label))
+    || (/读书|阅读|看书/.test(content) ? profile.budgets.find((item) => item.id === "reading") : null)
+    || (/写作|写稿|笔记/.test(content) ? profile.budgets.find((item) => item.id === "writing") : null)
+    || (/社交|聊天|沟通|见面/.test(content) ? profile.budgets.find((item) => item.id === "social") : null)
+    || profile.budgets[0];
+
+  const suggestedType = type === "时间记录" || minuteMatch || hourMatch
+    ? "log"
+    : /计划|目标|待办|要做|今天|明天/.test(content)
+      ? "task"
+      : "note";
+
+  return {
+    suggestedType,
+    category: budget?.id || "reading",
+    label: budget?.label || "记录",
+    minutes,
+    energy: energyMatch ? Number(energyMatch[1]) : day.energy || 3,
+    mood,
+    quality: content.includes("累") || content.includes("消耗") ? "消耗较大" : "有效投入",
+  };
 }
 
 function safeFileName(text, ext) {
@@ -213,7 +254,7 @@ export function App() {
   const [transcript, setTranscript] = useState("");
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
   const [taskDraft, setTaskDraft] = useState("");
-  const [logDraft, setLogDraft] = useState({ category: "reading", minutes: 25, quality: "有效投入" });
+  const [logDraft, setLogDraft] = useState({ category: "reading", minutes: 25, quality: "有效投入", energy: 3, mood: "平静", note: "" });
   const [recordingState, setRecordingState] = useState("idle");
   const [recordingUrl, setRecordingUrl] = useState("");
   const mediaRecorderRef = useRef(null);
@@ -263,11 +304,24 @@ export function App() {
   function saveVoiceNote() {
     const text = transcript.trim();
     if (!text) return;
+    const suggestion = inferCapture(text, voiceType, day, profile);
     updateDay((current) => ({
       ...current,
-      notes: [{ id: uid("note"), type: voiceType, text, time: timeNow() }, ...(current.notes || [])],
+      notes: voiceType === "时间记录" ? (current.notes || []) : [{ id: uid("note"), type: voiceType, text, time: timeNow() }, ...(current.notes || [])],
+      inbox: [{
+        id: uid("inbox"),
+        type: voiceType,
+        text,
+        time: timeNow(),
+        source: "文字/语音转写",
+        suggestion,
+      }, ...(current.inbox || [])],
     }));
     setTranscript("");
+  }
+
+  function openShortcuts() {
+    window.location.href = "shortcuts://";
   }
 
   async function startRecording() {
@@ -332,17 +386,73 @@ export function App() {
 
   function addLog() {
     const budget = profile.budgets.find((item) => item.id === logDraft.category);
+    const minutes = clampNumber(logDraft.minutes, 1, 1440, 25);
     updateDay((current) => ({
       ...current,
       logs: [{
         id: uid("log"),
         category: logDraft.category,
         label: budget?.label || "记录",
-        minutes: Number(logDraft.minutes),
+        minutes,
         quality: logDraft.quality,
-        energy: current.energy,
-        time: timeNow(),
+        energy: clampNumber(logDraft.energy, 1, 5, current.energy || 3),
+        mood: logDraft.mood || current.mood || "平静",
+        note: logDraft.note || "",
+        time: logDraft.time || timeNow(),
       }, ...(current.logs || [])],
+    }));
+    setLogDraft((draft) => ({ ...draft, minutes: 25, note: "", time: timeNow() }));
+  }
+
+  function updateLog(id, patch) {
+    updateDay((current) => ({
+      ...current,
+      logs: (current.logs || []).map((log) => log.id === id ? { ...log, ...patch } : log),
+    }));
+  }
+
+  function deleteLog(id) {
+    updateDay((current) => ({ ...current, logs: (current.logs || []).filter((log) => log.id !== id) }));
+  }
+
+  function deleteInboxItem(id) {
+    updateDay((current) => ({ ...current, inbox: (current.inbox || []).filter((item) => item.id !== id) }));
+  }
+
+  function inboxToLog(item) {
+    const suggestion = item.suggestion || inferCapture(item.text, item.type, day, profile);
+    updateDay((current) => ({
+      ...current,
+      logs: [{
+        id: uid("log"),
+        category: suggestion.category,
+        label: suggestion.label,
+        minutes: suggestion.minutes,
+        energy: suggestion.energy,
+        mood: suggestion.mood,
+        quality: suggestion.quality,
+        note: item.text,
+        time: item.time || timeNow(),
+        source: item.source,
+      }, ...(current.logs || [])],
+      inbox: (current.inbox || []).filter((entry) => entry.id !== item.id),
+    }));
+  }
+
+  function inboxToTask(item) {
+    const suggestion = item.suggestion || inferCapture(item.text, item.type, day, profile);
+    updateDay((current) => ({
+      ...current,
+      mustDos: [{ id: uid("task"), title: item.text, minutes: suggestion.minutes, done: false }, ...(current.mustDos || [])],
+      inbox: (current.inbox || []).filter((entry) => entry.id !== item.id),
+    }));
+  }
+
+  function inboxToNote(item) {
+    updateDay((current) => ({
+      ...current,
+      notes: [{ id: uid("note"), type: item.type || "灵感", text: item.text, time: item.time || timeNow() }, ...(current.notes || [])],
+      inbox: (current.inbox || []).filter((entry) => entry.id !== item.id),
     }));
   }
 
@@ -483,13 +593,29 @@ export function App() {
               stopRecording={stopRecording}
               saveRecording={saveRecording}
               supportsRecording={supportsRecording}
+              openShortcuts={openShortcuts}
+            />
+            <InboxPanel
+              inbox={day.inbox || []}
+              inboxToLog={inboxToLog}
+              inboxToTask={inboxToTask}
+              inboxToNote={inboxToNote}
+              deleteInboxItem={deleteInboxItem}
             />
             <div className="two-column">
               <TaskPanel day={day} updateDay={updateDay} taskDraft={taskDraft} setTaskDraft={setTaskDraft} addTask={addTask} />
               <EnergyPanel day={day} updateDay={updateDay} />
             </div>
             <HabitPanel profile={profile} day={day} updateDay={updateDay} />
-            <BudgetPanel budgetStats={budgetStats} logDraft={logDraft} setLogDraft={setLogDraft} addLog={addLog} />
+            <BudgetPanel
+              budgetStats={budgetStats}
+              logs={day.logs || []}
+              logDraft={logDraft}
+              setLogDraft={setLogDraft}
+              addLog={addLog}
+              updateLog={updateLog}
+              deleteLog={deleteLog}
+            />
             <InspirationPanel
               notes={day.notes || []}
               selectedNoteIds={selectedNoteIds}
@@ -577,6 +703,7 @@ function VoicePanel(props) {
     stopRecording,
     saveRecording,
     supportsRecording,
+    openShortcuts,
   } = props;
 
   return (
@@ -593,14 +720,52 @@ function VoicePanel(props) {
         <textarea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="先写下文字灵感；如果需要音频，用下方录音。" />
         <div className="button-row">
           <button className="primary" onClick={saveVoiceNote}>保存文字</button>
+          <button className="secondary" onClick={openShortcuts}>打开快捷指令</button>
           <button className="secondary" onClick={recordingState === "recording" ? stopRecording : startRecording}>
             {recordingState === "recording" ? "停止录音" : "开始录音"}
           </button>
           {recordingState === "ready" && <button className="secondary" onClick={saveRecording}>保存音频</button>}
         </div>
+        <div className="shortcut-card">
+          <strong>Action Button 推荐设置</strong>
+          <span>在 iPhone 快捷指令里新建“记录灵感”：先录制音频并保存到语音备忘录，再打开这个网页。回到这里后，把语音转写或摘要粘贴进上方文本框，它会进入待整理并给出分类建议。</span>
+        </div>
         {!supportsRecording && <p className="voice-hint">当前浏览器不支持网页录音，可用系统录音后把文件放入附件库。</p>}
-        {recordingState === "recording" && <p className="voice-hint">正在录音。录完后会保存到备份中心，不会写入苹果语音备忘录。</p>}
+        {recordingState === "recording" && <p className="voice-hint">正在使用网页内录音。若要直接进语音备忘录，请用上方快捷指令入口。</p>}
         {recordingUrl && <audio className="audio-preview" controls src={recordingUrl} />}
+      </div>
+    </section>
+  );
+}
+
+function InboxPanel({ inbox, inboxToLog, inboxToTask, inboxToNote, deleteInboxItem }) {
+  if (!inbox.length) return null;
+
+  return (
+    <section className="panel full">
+      <div className="panel-title">
+        <h2>待整理语音/文字</h2>
+        <span>{inbox.length} 条待确认</span>
+      </div>
+      <div className="inbox-list">
+        {inbox.map((item) => {
+          const suggestion = item.suggestion || {};
+          return (
+            <article className="inbox-card" key={item.id}>
+              <div>
+                <strong>{item.type} · {item.time}</strong>
+                <p>{item.text}</p>
+                <span>建议：{suggestion.label || "记录"} · {suggestion.minutes || 25} 分钟 · 能量 {suggestion.energy || 3}/5 · {suggestion.mood || "平静"}</span>
+              </div>
+              <div className="inbox-actions">
+                <button onClick={() => inboxToLog(item)}>转时间记录</button>
+                <button onClick={() => inboxToTask(item)}>转计划</button>
+                <button onClick={() => inboxToNote(item)}>转灵感</button>
+                <button onClick={() => deleteInboxItem(item.id)}>删除</button>
+              </div>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -650,7 +815,7 @@ function EnergyPanel({ day, updateDay }) {
       <Slider label="能量" value={day.energy} onChange={(value) => updateDay((current) => ({ ...current, energy: value }))} />
       <Slider label="专注" value={day.focus} onChange={(value) => updateDay((current) => ({ ...current, focus: value }))} />
       <div className="mood-row">
-        {["平静", "开心", "焦虑", "低落", "兴奋"].map((mood) => (
+        {MOODS.map((mood) => (
           <button key={mood} className={day.mood === mood ? "selected" : ""} onClick={() => updateDay((current) => ({ ...current, mood }))}>{mood}</button>
         ))}
       </div>
@@ -694,12 +859,12 @@ function HabitPanel({ profile, day, updateDay }) {
   );
 }
 
-function BudgetPanel({ budgetStats, logDraft, setLogDraft, addLog }) {
+function BudgetPanel({ budgetStats, logs, logDraft, setLogDraft, addLog, updateLog, deleteLog }) {
   return (
     <section className="panel full">
       <div className="panel-title">
-        <h2>今日时间预算</h2>
-        <span>柳比歇夫记录</span>
+        <h2>真实时间账本</h2>
+        <span>可补记 / 可修改 / 可删除</span>
       </div>
       <div className="budget-list">
         {budgetStats.map((budget) => (
@@ -716,8 +881,45 @@ function BudgetPanel({ budgetStats, logDraft, setLogDraft, addLog }) {
         <select value={logDraft.category} onChange={(event) => setLogDraft((draft) => ({ ...draft, category: event.target.value }))}>
           {budgetStats.map((budget) => <option key={budget.id} value={budget.id}>{budget.label}</option>)}
         </select>
-        <input type="number" min="1" value={logDraft.minutes} onChange={(event) => setLogDraft((draft) => ({ ...draft, minutes: event.target.value }))} />
-        <button onClick={addLog}>记一段</button>
+        <input type="time" value={logDraft.time || timeNow()} onChange={(event) => setLogDraft((draft) => ({ ...draft, time: event.target.value }))} />
+        <input type="number" min="1" value={logDraft.minutes} onChange={(event) => setLogDraft((draft) => ({ ...draft, minutes: event.target.value }))} aria-label="分钟" />
+        <select value={logDraft.energy || 3} onChange={(event) => setLogDraft((draft) => ({ ...draft, energy: Number(event.target.value) }))} aria-label="能量">
+          {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>能量 {value}</option>)}
+        </select>
+        <select value={logDraft.mood || "平静"} onChange={(event) => setLogDraft((draft) => ({ ...draft, mood: event.target.value }))} aria-label="心情">
+          {MOODS.map((mood) => <option key={mood} value={mood}>{mood}</option>)}
+        </select>
+        <select value={logDraft.quality} onChange={(event) => setLogDraft((draft) => ({ ...draft, quality: event.target.value }))} aria-label="质量">
+          {QUALITY_OPTIONS.map((quality) => <option key={quality} value={quality}>{quality}</option>)}
+        </select>
+        <input value={logDraft.note || ""} onChange={(event) => setLogDraft((draft) => ({ ...draft, note: event.target.value }))} placeholder="做了什么" />
+        <button onClick={addLog}>补记</button>
+      </div>
+      <div className="log-list">
+        {logs.length === 0 && <p className="empty-hint">今天还没有时间记录。先补记一段，比如“读书 35 分钟，能量 4”。</p>}
+        {logs.map((log) => (
+          <article className="log-card" key={log.id}>
+            <select value={log.category} onChange={(event) => {
+              const budget = budgetStats.find((item) => item.id === event.target.value);
+              updateLog(log.id, { category: event.target.value, label: budget?.label || log.label });
+            }}>
+              {budgetStats.map((budget) => <option key={budget.id} value={budget.id}>{budget.label}</option>)}
+            </select>
+            <input type="time" value={log.time || "09:00"} onChange={(event) => updateLog(log.id, { time: event.target.value })} />
+            <input type="number" min="1" value={log.minutes || 1} onChange={(event) => updateLog(log.id, { minutes: clampNumber(event.target.value, 1, 1440, 1) })} aria-label="已用分钟" />
+            <select value={log.energy || 3} onChange={(event) => updateLog(log.id, { energy: Number(event.target.value) })} aria-label="能量状态">
+              {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>能量 {value}</option>)}
+            </select>
+            <select value={log.mood || "平静"} onChange={(event) => updateLog(log.id, { mood: event.target.value })} aria-label="心情">
+              {MOODS.map((mood) => <option key={mood} value={mood}>{mood}</option>)}
+            </select>
+            <select value={log.quality || "有效投入"} onChange={(event) => updateLog(log.id, { quality: event.target.value })} aria-label="投入质量">
+              {QUALITY_OPTIONS.map((quality) => <option key={quality} value={quality}>{quality}</option>)}
+            </select>
+            <input value={log.note || ""} onChange={(event) => updateLog(log.id, { note: event.target.value })} placeholder="备注" />
+            <button onClick={() => deleteLog(log.id)}>删除</button>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -774,6 +976,10 @@ function CalendarPanel({ timeline, profile, exportCalendar }) {
 
 function StatsPanel({ day, budgetStats }) {
   const total = (day.logs || []).reduce((sum, log) => sum + Number(log.minutes || 0), 0);
+  const energyLogs = (day.logs || []).filter((log) => Number(log.energy));
+  const averageEnergy = energyLogs.length
+    ? (energyLogs.reduce((sum, log) => sum + Number(log.energy), 0) / energyLogs.length).toFixed(1)
+    : day.energy;
   return (
     <section className="panel full">
       <div className="panel-title">
@@ -781,7 +987,7 @@ function StatsPanel({ day, budgetStats }) {
         <span>{total} 分钟有效记录</span>
       </div>
       <div className="stats-grid">
-        <div><strong>{day.energy}/5</strong><span>平均能量</span></div>
+        <div><strong>{averageEnergy}/5</strong><span>记录平均能量</span></div>
         <div><strong>{day.focus}/5</strong><span>专注水平</span></div>
         <div><strong>{day.mood}</strong><span>主要心情</span></div>
       </div>
@@ -900,6 +1106,7 @@ function BackupCenter(props) {
   } = props;
   const totalNotes = Object.values(state.days).reduce((sum, item) => sum + (item.notes?.length || 0), 0);
   const totalLogs = Object.values(state.days).reduce((sum, item) => sum + (item.logs?.length || 0), 0);
+  const totalInbox = Object.values(state.days).reduce((sum, item) => sum + (item.inbox?.length || 0), 0);
   const totalFiles = Object.values(state.days).reduce((sum, item) => sum + (item.attachments?.length || 0), 0);
   const attachments = day.attachments || [];
 
@@ -912,9 +1119,10 @@ function BackupCenter(props) {
       <div className="backup-stats">
         <div><strong>{totalNotes}</strong><span>文字记录</span></div>
         <div><strong>{totalLogs}</strong><span>时间记录</span></div>
+        <div><strong>{totalInbox}</strong><span>待整理</span></div>
         <div><strong>{totalFiles}</strong><span>附件</span></div>
       </div>
-      <p className="backup-note">完整备份会包含设置、时间记录、灵感文字、录音和小附件。大文件请放百度云盘，灵感卡里保存链接和提取码。</p>
+      <p className="backup-note">完整备份会包含设置、时间记录、待整理语音文字、灵感文字、录音和小附件。大文件请放百度云盘，灵感卡里保存链接和提取码。</p>
       <div className="button-row export-row">
         <button className="primary" onClick={exportData}>完整备份</button>
         <button className="secondary" onClick={exportSelectedNotes}>导出已选灵感</button>
